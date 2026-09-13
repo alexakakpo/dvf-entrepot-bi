@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Télécharger, modéliser, tester
+    runs-on: ubuntu-latest
+
+    env:
+      DVF_DATA_DIR: ${{ github.workspace }}/data
+      DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      # Une seule année en CI : le modèle et les tests sont exercés en entier,
+      # sans faire tourner 150 Mo de téléchargement à chaque commit.
+      - name: Télécharger une année de données
+        run: python scripts/download.py --annees 2023
+
+      - name: Construire l'étoile et lancer les tests
+        run: dbt build --project-dir dbt --profiles-dir dbt
+
+      - name: Publier les artefacts dbt en cas d'échec
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-logs
+          path: |
+            dbt/logs
+            dbt/target

@@ -1,0 +1,10 @@
+# Profil versionné : aucune information sensible, la base est un simple
+# fichier DuckDB local.
+dvf_entrepot:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DVF_DATA_DIR', 'data') }}/warehouse/dvf.duckdb"
+      schema: main
+      threads: 4

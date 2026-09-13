@@ -1,0 +1,7 @@
+duckdb>=1.0
+
+# Bornes hautes volontaires : dbt-core 1.12 introduit une dépendance qui
+# télécharge un binaire depuis GitHub pendant l'installation, ce qui échoue
+# sur toute machine dont le magasin de certificats n'est pas configuré.
+dbt-core>=1.8,<1.12
+dbt-duckdb>=1.8,<1.12

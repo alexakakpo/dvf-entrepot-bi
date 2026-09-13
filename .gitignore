@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# dbt
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+
+# Données brutes : ~150 Mo par département, retéléchargeables en une commande.
+data/raw/*.csv.gz
+data/raw/*.tmp
+
+# Entrepôt et exports : entièrement reconstructibles.
+data/warehouse/*.duckdb
+data/warehouse/*.duckdb.wal
+powerbi/exports/
+
+# Le .pbix, lui, EST versionné : c'est un livrable du projet.
+# (rien à ignorer ici, la ligne est volontairement absente)
+
+.env
+.DS_Store
+.idea/
+.vscode/

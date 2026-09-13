@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: brut
+    description: >
+      Fichiers DVF géolocalisés d'Etalab, lus directement sur disque par
+      DuckDB — aucune étape d'import, aucune copie. `all_varchar` est
+      volontaire : on lit tout en texte et on type explicitement dans le
+      modèle staging, plutôt que de laisser DuckDB deviner sur un échantillon
+      et échouer sur une ligne atypique au bout de 500 000 enregistrements.
+    tables:
+      - name: dvf
+        meta:
+          external_location: >-
+            read_csv_auto('{{ env_var('DVF_DATA_DIR', 'data') }}/raw/*.csv.gz',
+            union_by_name = true, all_varchar = true)

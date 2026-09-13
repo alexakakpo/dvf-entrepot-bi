@@ -1,0 +1,67 @@
+version: 2
+
+models:
+  - name: fct_mutation
+    description: >
+      Table de faits au grain « une vente ». Une ligne = une mutation portant
+      sur un seul local bâti, prix au m² calculable.
+    columns:
+      - name: mutation_key
+        description: Clé de substitution. Son unicité EST la garantie du grain.
+        tests: [not_null, unique]
+      - name: id_mutation
+        tests: [not_null, unique]
+      - name: date_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: commune_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_commune')
+                field: commune_key
+      - name: type_bien_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_type_bien')
+                field: type_bien_key
+      - name: valeur_fonciere
+        tests: [not_null]
+      - name: surface_bati
+        tests: [not_null]
+      - name: prix_m2
+        tests: [not_null]
+
+  - name: dim_commune
+    description: Une ligne par commune observée dans les fichiers DVF.
+    columns:
+      - name: commune_key
+        tests: [not_null, unique]
+      - name: nom_commune
+        tests: [not_null]
+
+  - name: dim_date
+    description: Calendrier continu couvrant toute la période observée.
+    columns:
+      - name: date_key
+        tests: [not_null, unique]
+      - name: annee
+        tests: [not_null]
+
+  - name: dim_type_bien
+    description: Libellés et ordre d'affichage des types de biens.
+    columns:
+      - name: type_bien_key
+        tests: [not_null, unique]
+      - name: libelle
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["Maison", "Appartement"]

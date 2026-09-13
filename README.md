@@ -1,132 +1,158 @@
-# Entrepôt décisionnel DVF — marché immobilier de la Haute-Garonne
+# Entrepôt décisionnel DVF : le marché immobilier de la Haute-Garonne
 
-Modélisation en étoile des **Demandes de Valeurs Foncières** (toutes les ventes
-immobilières enregistrées en France), restituée dans Power BI.
+Projet personnel réalisé pendant mon M2 MIAGE (parcours Ingénierie des Données
+et Analyses) à Toulouse Capitole.
 
-L'intérêt du projet tient en une phrase : **DVF est un jeu de données piégé, et
-ce dépôt montre qu'on connaît le piège.**
+Je voulais un projet complet plutôt qu'un notebook : prendre un vrai jeu de
+données public, le modéliser en étoile, le tester, et le restituer dans Power
+BI. Le tout doit pouvoir se relancer chez quelqu'un d'autre en trois commandes.
+
+Les données viennent des **Demandes de Valeurs Foncières** publiées par Etalab,
+c'est-à-dire toutes les ventes immobilières enregistrées en France. J'ai pris la
+Haute-Garonne, 2021 à 2025, soit 409 358 lignes.
 
 ## Aperçu
 
 ![Tableau de bord Power BI](docs/images/dashboard.png)
 
-Le schéma en étoile, tel qu'il est monté dans Power BI — une table de faits,
-trois dimensions, relations en plusieurs-à-un et sens unique :
+Le modèle tel qu'il est monté dans Power BI : une table de faits, trois
+dimensions, relations en plusieurs-à-un et sens unique.
 
 ![Modèle en étoile](docs/images/modele-etoile.png)
 
-```mermaid
-flowchart LR
-    A["DVF géolocalisées<br/>Etalab — CSV.gz"] --> B
-    B["<b>Staging</b> — dbt<br/>typage explicite"] --> C
-    C["<b>Étoile</b> — dbt<br/>1 fait + 3 dimensions"] --> D
-    C --> E
-    D["Export Parquet<br/>→ Power BI"]
-    E["Requêtes SQL<br/>DuckDB"]
-```
+## Stack
 
 | | |
 |---|---|
-| **Source** | DVF géolocalisées (Etalab), ~6 années, département paramétrable |
-| **Moteur** | DuckDB — les CSV compressés sont lus sur place, sans import |
-| **Modélisation** | dbt, schéma en étoile, 5 modèles, 24 tests |
-| **Restitution** | Power BI Desktop (modèle + mesures DAX fournies) |
+| Données | DVF géolocalisées (Etalab), 5 millésimes, département paramétrable |
+| Moteur | DuckDB, qui lit les CSV compressés directement sans étape d'import |
+| Modélisation | dbt, 5 modèles et 24 tests |
+| Restitution | Power BI Desktop |
+| CI | GitHub Actions : télécharge une année, reconstruit l'étoile, relance les tests |
 
----
-
-## Démarrage
+## Lancer le projet
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 export DVF_DATA_DIR=$PWD/data
-make download     # ~150 Mo, quelques minutes
-make explore      # À LIRE : colonnes réelles, volume, et le piège du grain
-make dbt          # construit l'étoile et lance les tests
-make verifier     # chiffres de contrôle
-make export       # Parquet prêt pour Power BI
+make download     # ~10 Mo
+make explore      # affiche les colonnes réelles et le volume
+make dbt          # construit l'étoile + lance les tests
+make verifier     # quelques chiffres de contrôle
+make export       # génère les Parquet pour Power BI
 ```
-
-Puis dans Power BI Desktop : **Obtenir des données → Dossier →
-`powerbi/exports`**, et suivre [docs/modele.md](docs/modele.md) pour les
-relations et [docs/mesures_dax.md](docs/mesures_dax.md) pour les mesures.
 
 Pour un autre département : `python scripts/download.py --dep 34`.
 
----
+## Le problème que j'ai trouvé dans les données
 
-## Le piège du grain
+C'est la partie que je trouve la plus intéressante.
 
-DVF éclate chaque vente sur plusieurs lignes — une par lot, par parcelle ou par
-local — et **répète la valeur foncière à l'identique sur chacune**.
+En explorant les fichiers avec `make explore`, je suis tombé sur un ratio de
+**2,58 lignes par vente**. En creusant, j'ai compris pourquoi : DVF découpe
+chaque vente en plusieurs lignes (une par lot, par parcelle ou par local) et
+**recopie la valeur foncière à l'identique sur chacune**.
 
-`SUM(valeur_fonciere)` sur le fichier brut surestime donc le volume de
-transactions d'un facteur 2 à 3. L'erreur est invisible : le chiffre obtenu est
-plausible, simplement faux.
+Donc si on fait un simple `SUM(valeur_fonciere)`, on annonce un marché deux à
+trois fois plus gros qu'il n'est. Et rien ne le signale : le chiffre obtenu
+reste crédible.
 
-`fct_mutation` ramène au grain « une vente ». Trois garde-fous rendent cette
-garantie vérifiable plutôt que déclarative :
+J'ai donc construit `fct_mutation` au grain « une vente » plutôt qu'au grain
+« une ligne de fichier ». Sur mon périmètre :
 
-| Contrôle | Ce qu'il garantit |
+| | |
 |---|---|
-| `unique` sur `mutation_key` | Le grain est bien une vente, pas une ligne de fichier |
-| `assert_valeur_fonciere_non_dupliquee` | La déduplication dédupliquerait encore si quelqu'un cassait la logique |
-| `assert_prix_m2_dans_les_bornes` | Aucun prix aberrant n'a contourné le filtre |
+| Lignes brutes | 409 358 |
+| Ventes retenues après nettoyage | 92 971 |
+| Somme naïve de la valeur foncière | 47,40 Md€ |
+| Somme au grain vente | 20,70 Md€ |
+| Écart | **129 %** |
 
-`make verifier` affiche l'écart entre la somme naïve et la somme correcte. C'est
-le chiffre à citer en entretien.
+Ces chiffres sortent de `make verifier`, je ne les ai pas recopiés à la main.
 
-## Les autres choix, et pourquoi
+Pour être sûr que ça ne casse pas si je modifie le SQL plus tard, j'ai écrit
+trois contrôles :
 
-**Typage explicite plutôt que détection automatique.** Les CSV sont lus en
-`all_varchar`, puis convertis colonne par colonne dans `stg_mutations`. DuckDB
-sait deviner les types sur un échantillon, mais échoue sur la ligne atypique au
-bout de 500 000 enregistrements — et l'échec arrive en production, pas en
-développement.
+- `unique` sur `mutation_key` : garantit qu'une ligne correspond bien à une vente
+- `assert_valeur_fonciere_non_dupliquee` : compare les deux totaux et échoue si
+  la déduplication ne déduplique plus
+- `assert_prix_m2_dans_les_bornes` : vérifie qu'aucun prix aberrant n'est passé
 
-**Les règles de gestion sont des variables, pas du SQL enfoui.** Nature de
-mutation, surface minimale, bornes de prix au m² : tout est dans
-`dbt_project.yml`, visible en dix secondes par un relecteur et modifiable sans
-toucher aux modèles.
+## Mes choix, et pourquoi
 
-**Pas d'orchestrateur.** DVF est publié deux fois par an. Ajouter Airflow ou
-Dagster pour un traitement semestriel serait de la décoration ; `make tout`
-suffit et se justifie mieux à l'oral.
+**Je type les colonnes à la main plutôt que de laisser DuckDB deviner.** Les CSV
+sont lus en `all_varchar`, puis convertis un par un dans `stg_mutations`. La
+détection automatique marche sur un échantillon, mais elle plante sur la ligne
+bizarre au bout de 500 000 enregistrements, et en général au mauvais moment.
 
-**La médiane, pas la moyenne.** La distribution des prix immobiliers est
-fortement asymétrique. Quelques ventes à plusieurs millions déplacent la moyenne
-vers un marché que personne ne rencontre.
+**Les règles de nettoyage sont des variables dbt, pas du SQL caché.** Nature de
+mutation, surface minimale, bornes de prix au m² : tout est en haut de
+`dbt_project.yml`. On voit en dix secondes ce que j'ai filtré, et on peut le
+changer sans toucher aux modèles.
 
-**Un seuil de fiabilité dans les visuels.** Une médiane sur 4 ventes s'affiche
-exactement comme une médiane sur 4 000. La mesure `Prix m2 médian fiable` masque
-les communes sous 30 ventes — un choix d'analyste, pas une limite technique.
+**Je n'ai pas mis d'orchestrateur.** DVF est publié deux fois par an. Brancher
+Airflow ou Dagster là-dessus aurait fait joli sur le CV mais n'aurait servi à
+rien. `make tout` suffit.
 
----
+**J'utilise la médiane, pas la moyenne.** Les prix immobiliers sont très étalés
+vers le haut : quelques ventes à plusieurs millions décalent la moyenne vers un
+marché que personne ne rencontre. La médiane répond à « combien paie un acheteur
+normal ».
 
-## Structure
+**J'ai mis un seuil de fiabilité dans les visuels.** Une médiane calculée sur 4
+ventes s'affiche exactement comme une médiane calculée sur 4 000. La mesure
+`Prix m2 médian fiable` masque les communes sous 30 ventes. Sans ça, le
+classement des communes les plus chères serait occupé par des villages où il
+s'est vendu trois maisons.
+
+## Ce que montrent les données
+
+Le prix au m² monte jusqu'à fin 2022, puis se retourne. Les maisons décrochent
+plus vite que les appartements. En parallèle, le volume de ventes passe de
+21 760 en 2021 à 14 974 en 2024.
+
+Prix au m² médian en 2025 : 2 952 € pour un appartement, 2 738 € pour une
+maison. La commune la plus chère est Balma, devant Toulouse.
+
+## Organisation du dépôt
 
 ```
-├── scripts/          téléchargement, inspection, export Power BI
+├── scripts/          téléchargement, exploration, export Power BI
 ├── dbt/
 │   ├── models/
-│   │   ├── staging/  typage explicite de la source
+│   │   ├── staging/  typage de la source
 │   │   └── marts/    fct_mutation + dim_date, dim_commune, dim_type_bien
 │   └── tests/        contrôles de grain et de plausibilité
-├── docs/             modèle (MCD, relations Power BI) et mesures DAX
-└── powerbi/exports/  fichiers générés, consommés par Power BI
+├── docs/             modèle de données et mesures DAX
+└── powerbi/          le rapport .pbix et les exports Parquet
 ```
 
-## Limites connues
+`docs/modele.md` décrit le schéma et les relations à créer dans Power BI.
+`docs/mesures_dax.md` contient les 11 mesures que j'ai écrites.
 
-- DVF ne couvre ni l'Alsace-Moselle ni Mayotte (régimes cadastraux distincts).
-- Les ventes de biens neufs en VEFA sont sous-représentées.
-- Les filtres de nettoyage écartent une part importante des lignes : l'objectif
-  est un indicateur de prix au m² interprétable, pas l'exhaustivité comptable.
-- Les fusions de communes ne sont que signalées, pas historisées (voir
-  [docs/modele.md](docs/modele.md)).
+## Limites
+
+- DVF ne couvre ni l'Alsace-Moselle ni Mayotte, qui ont un régime cadastral
+  différent.
+- Les ventes en VEFA (logement neuf sur plan) sont exclues par mon filtre sur
+  `nature_mutation`. Ça représente 11 % du volume : c'est un choix assumé, mais
+  il faut le savoir.
+- Etalab ne garde que cinq millésimes, donc l'historique se décale d'une année à
+  chaque publication.
+- Les fusions de communes sont détectées mais pas historisées. Sur la
+  Haute-Garonne le contrôle ne remonte rien ; il servira si j'élargis le
+  périmètre.
+
+## La suite
+
+- Historiser les communes en SCD2 avec le Code Officiel Géographique de l'INSEE
+- Étendre à toute l'Occitanie pour comparer les territoires
+- Publier le dashboard sous forme de site consultable, pour ne pas dépendre d'un
+  fichier `.pbix`
 
 ## Sources
 
-- [Demandes de valeurs foncières géolocalisées — data.gouv.fr](https://www.data.gouv.fr/datasets/demandes-de-valeurs-foncieres-geolocalisees)
+- [Demandes de valeurs foncières géolocalisées sur data.gouv.fr](https://www.data.gouv.fr/datasets/demandes-de-valeurs-foncieres-geolocalisees)
 - [Fichiers Etalab](https://files.data.gouv.fr/geo-dvf/latest/csv/)
